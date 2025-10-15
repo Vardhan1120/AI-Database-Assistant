@@ -6,11 +6,12 @@ A professional-grade Streamlit application for natural language database queryin
 
 - 🤖 **AI-Powered Query Generation** - Convert natural language to optimized SQL using Google Gemini AI
 - 💬 **Multi-Session Management** - Save and switch between multiple chat sessions
-- 📊 **CSV to SQLite Conversion** - Instant database creation from CSV files
+- 📊 **Single & Batch CSV Processing** - Upload individual files or entire folders of CSV files
 - 📈 **Automatic Visualizations** - Smart chart generation based on data patterns
 - 💾 **Export Capabilities** - Download results as CSV or chat history as JSON
 - 🔒 **Enterprise Security** - Built-in SQL injection prevention and query validation
 - 📊 **Real-time Statistics** - Track queries, sessions, and performance metrics
+- 📁 **Folder Upload Support** - Process multiple CSV files simultaneously with progress tracking
 
 ## Installation
 

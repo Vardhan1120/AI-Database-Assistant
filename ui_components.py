@@ -4,6 +4,8 @@ UI components and rendering functions
 
 import json
 import tempfile
+import sqlite3
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Dict
@@ -148,58 +150,36 @@ def render_file_upload():
     """Render file upload section"""
     st.subheader("📁 Data Source")
     
-    uploaded_file = st.file_uploader(
-        "Upload Database or CSV",
-        type=['db', 'sqlite', 'csv'],
-        help="Supported formats: SQLite (.db, .sqlite) or CSV files",
-        key="db_uploader"
+    # Upload type selection
+    upload_type = st.radio(
+        "Choose upload type:",
+        ["📄 Single File", "📁 Folder (Multiple Files)"],
+        horizontal=True,
+        key="upload_type_selector"
     )
     
-    if uploaded_file:
-        file_extension = Path(uploaded_file.name).suffix.lower()
+    if upload_type == "📄 Single File":
+        uploaded_file = st.file_uploader(
+            "Upload Database or CSV",
+            type=['db', 'sqlite', 'csv'],
+            help="Supported formats: SQLite (.db, .sqlite) or CSV files",
+            key="db_uploader"
+        )
         
-        with st.spinner("🔄 Processing file..."):
-            try:
-                if file_extension == '.csv':
-                    db_path = DatabaseManager.create_from_csv(uploaded_file)
-                else:
-                    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=file_extension)
-                    temp_db.write(uploaded_file.read())
-                    temp_db.close()
-                    db_path = temp_db.name
-                
-                if db_path:
-                    st.session_state.db_path = db_path
-                    schema, stats = DatabaseManager.get_schema(db_path)
-                    
-                    if schema and stats:
-                        st.session_state.db_schema = schema
-                        st.session_state.db_stats = stats
-                        
-                        st.success(f"✅ Successfully loaded: {uploaded_file.name}")
-                        
-                        # Display statistics
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("📊 Tables", stats['total_tables'])
-                        with col2:
-                            st.metric("📝 Rows", f"{stats['total_rows']:,}")
-                        with col3:
-                            st.metric("🔢 Columns", stats['total_columns'])
-                        
-                        # Generate suggestions if AI is configured
-                        if st.session_state.genai_client and not st.session_state.suggested_queries:
-                            with st.spinner("🤖 Generating smart suggestions..."):
-                                st.session_state.suggested_queries = AIManager.generate_suggestions(
-                                    st.session_state.genai_client,
-                                    schema
-                                )
-                    else:
-                        st.error("❌ Could not read database schema")
-                        
-            except Exception as e:
-                Logger.error("Error during file upload", e)
-                st.error(f"❌ Error processing file: {str(e)}")
+        if uploaded_file:
+            process_single_file(uploaded_file)
+    
+    else:  # Folder upload
+        uploaded_files = st.file_uploader(
+            "Upload Multiple CSV Files",
+            type=['csv'],
+            accept_multiple_files=True,
+            help="Upload multiple CSV files to create a comprehensive database",
+            key="folder_uploader"
+        )
+        
+        if uploaded_files:
+            process_folder_upload(uploaded_files)
 
 
 def render_schema_viewer():
@@ -659,6 +639,232 @@ def handle_query_error(exec_result: Dict, sql_query: str, explanation: str):
         "sql_query": sql_query,
         "dataframe": None
     })
+
+
+def process_single_file(uploaded_file):
+    """Process a single uploaded file"""
+    file_extension = Path(uploaded_file.name).suffix.lower()
+    
+    with st.spinner("🔄 Processing file..."):
+        try:
+            if file_extension == '.csv':
+                db_path = DatabaseManager.create_from_csv(uploaded_file)
+            else:
+                temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=file_extension)
+                temp_db.write(uploaded_file.read())
+                temp_db.close()
+                db_path = temp_db.name
+            
+            if db_path:
+                st.session_state.db_path = db_path
+                schema, stats = DatabaseManager.get_schema(db_path)
+                
+                if schema and stats:
+                    st.session_state.db_schema = schema
+                    st.session_state.db_stats = stats
+                    
+                    st.success(f"✅ Successfully loaded: {uploaded_file.name}")
+                    
+                    # Display statistics
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("📊 Tables", stats['total_tables'])
+                    with col2:
+                        st.metric("📝 Rows", f"{stats['total_rows']:,}")
+                    with col3:
+                        st.metric("🔢 Columns", stats['total_columns'])
+                    
+                    # Generate suggestions if AI is configured
+                    if st.session_state.genai_client and not st.session_state.suggested_queries:
+                        with st.spinner("🤖 Generating smart suggestions..."):
+                            st.session_state.suggested_queries = AIManager.generate_suggestions(
+                                st.session_state.genai_client,
+                                schema
+                            )
+                else:
+                    st.error("❌ Could not read database schema")
+                    
+        except Exception as e:
+            Logger.error("Error during file upload", e)
+            st.error(f"❌ Error processing file: {str(e)}")
+
+
+def process_folder_upload(uploaded_files):
+    """Process multiple CSV files from folder upload"""
+    if not uploaded_files:
+        return
+    
+    # Validate files
+    csv_files = [f for f in uploaded_files if f.name.lower().endswith('.csv')]
+    
+    if not csv_files:
+        st.error("❌ No CSV files found in upload")
+        return
+    
+    if len(csv_files) > 20:
+        st.warning("⚠️ Too many files! Please upload 20 or fewer CSV files for optimal performance.")
+        return
+    
+    st.info(f"📁 Processing {len(csv_files)} CSV files...")
+    
+    # Debug: Show file names
+    with st.expander("📋 Files to Process", expanded=True):
+        for i, file in enumerate(csv_files, 1):
+            st.write(f"{i}. {file.name}")
+    
+    # Create progress bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    try:
+        # Create temporary database
+        temp_db = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+        temp_db.close()
+        db_path = temp_db.name
+        
+        conn = sqlite3.connect(db_path)
+        processed_tables = []
+        total_rows = 0
+        errors = []
+        skipped_files = []
+        
+        for i, csv_file in enumerate(csv_files):
+            try:
+                # Update progress
+                progress = (i + 1) / len(csv_files)
+                progress_bar.progress(progress)
+                status_text.text(f"Processing {csv_file.name}...")
+                
+                # Read CSV with better error handling
+                # Robust CSV reading with multiple encodings
+                encodings_to_try = ['utf-8', 'utf-8-sig', 'cp1252', 'latin-1']
+                df = None
+                last_read_error = None
+                for enc in encodings_to_try:
+                    try:
+                        df = pd.read_csv(csv_file, encoding=enc, on_bad_lines='skip', engine='python')
+                        break
+                    except Exception as read_error:
+                        last_read_error = read_error
+                        try:
+                            csv_file.seek(0)
+                        except Exception:
+                            pass
+                        continue
+                if df is None:
+                    errors.append(f"❌ {csv_file.name}: Failed to read CSV - {str(last_read_error)}")
+                    continue
+                
+                if df.empty:
+                    skipped_files.append(f"⚠️ {csv_file.name}: Empty file, skipped")
+                    continue
+                
+                # Clean column names
+                df.columns = (df.columns
+                             .str.strip()
+                             .str.replace(r'[^\w\s]', '_', regex=True)
+                             .str.replace(r'\s+', '_', regex=True)
+                             .str.lower())
+                
+                # Remove duplicate columns
+                df = df.loc[:, ~df.columns.duplicated()]
+                
+                # Generate table name with better logic
+                table_name = Path(csv_file.name).stem
+                table_name = re.sub(r'[^\w]', '_', table_name).lower()
+                
+                # Ensure we have a valid table name
+                if not table_name or table_name == '':
+                    table_name = f"table_{i+1}"
+                
+                # Ensure unique table name
+                original_name = table_name
+                counter = 1
+                while table_name in processed_tables:
+                    table_name = f"{original_name}_{counter}"
+                    counter += 1
+                
+                # Write to database with error handling
+                try:
+                    df.to_sql(table_name, conn, if_exists='replace', index=False)
+                    processed_tables.append(table_name)
+                    total_rows += len(df)
+                    
+                    Logger.log(f"✅ Processed {csv_file.name} → {table_name} ({len(df)} rows)")
+                    
+                except Exception as db_error:
+                    errors.append(f"❌ {csv_file.name}: Database write failed - {str(db_error)}")
+                    Logger.error(f"Database write error for {csv_file.name}", db_error)
+                    continue
+                
+            except Exception as e:
+                error_msg = f"❌ {csv_file.name}: Unexpected error - {str(e)}"
+                errors.append(error_msg)
+                Logger.error(f"Unexpected error processing {csv_file.name}", e)
+        
+        conn.close()
+        
+        # Update session state
+        st.session_state.db_path = db_path
+        schema, stats = DatabaseManager.get_schema(db_path)
+        
+        if schema and stats:
+            st.session_state.db_schema = schema
+            st.session_state.db_stats = stats
+            
+            # Success message with detailed info
+            success_msg = f"✅ Successfully processed {len(processed_tables)} tables from {len(csv_files)} files!"
+            if skipped_files:
+                success_msg += f" ({len(skipped_files)} files skipped)"
+            st.success(success_msg)
+            
+            # Display comprehensive statistics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("📊 Tables Created", len(processed_tables))
+            with col2:
+                st.metric("📝 Total Rows", f"{total_rows:,}")
+            with col3:
+                st.metric("🔢 Total Columns", stats['total_columns'])
+            with col4:
+                st.metric("📁 Files Processed", f"{len(processed_tables)}/{len(csv_files)}")
+            
+            # Show table names
+            with st.expander("📋 Created Tables", expanded=True):
+                for table_name in processed_tables:
+                    table_info = schema.get(table_name, {})
+                    row_count = table_info.get('row_count', 0)
+                    st.write(f"• **{table_name}** ({row_count:,} rows)")
+            
+            # Show skipped files if any
+            if skipped_files:
+                with st.expander("⚠️ Skipped Files", expanded=False):
+                    for skipped in skipped_files:
+                        st.write(skipped)
+            
+            # Show errors if any
+            if errors:
+                with st.expander("❌ Processing Errors", expanded=False):
+                    for error in errors:
+                        st.write(error)
+            
+            # Generate suggestions if AI is configured
+            if st.session_state.genai_client and not st.session_state.suggested_queries:
+                with st.spinner("🤖 Generating smart suggestions for your multi-table database..."):
+                    st.session_state.suggested_queries = AIManager.generate_suggestions(
+                        st.session_state.genai_client,
+                        schema
+                    )
+        else:
+            st.error("❌ Could not read database schema")
+    
+    except Exception as e:
+        Logger.error("Error during folder upload processing", e)
+        st.error(f"❌ Error processing folder: {str(e)}")
+    
+    finally:
+        progress_bar.empty()
+        status_text.empty()
 
 
 def render_footer():

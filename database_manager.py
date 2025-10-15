@@ -8,7 +8,7 @@ import tempfile
 import time
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple, Any
 import streamlit as st
 from config import Config
 from utils import Logger, Validator
@@ -21,8 +21,24 @@ class DatabaseManager:
     def create_from_csv(csv_file) -> Optional[str]:
         """Create SQLite database from CSV file"""
         try:
-            # Read CSV with encoding handling
-            df = pd.read_csv(csv_file, encoding='utf-8', on_bad_lines='skip')
+            # Read CSV with robust encoding fallbacks
+            encodings_to_try = ['utf-8', 'utf-8-sig', 'cp1252', 'latin-1']
+            last_error = None
+            df = None
+            for enc in encodings_to_try:
+                try:
+                    # Reset file pointer between attempts
+                    try:
+                        csv_file.seek(0)
+                    except Exception:
+                        pass
+                    df = pd.read_csv(csv_file, encoding=enc, on_bad_lines='skip', engine='python')
+                    break
+                except Exception as e:
+                    last_error = e
+                    continue
+            if df is None:
+                raise last_error if last_error else ValueError("Failed to read CSV with available encodings")
             
             if df.empty:
                 st.error("❌ CSV file is empty")
@@ -133,7 +149,7 @@ class DatabaseManager:
             if conn:
                 try:
                     conn.close()
-                except:
+                except Exception:
                     pass
     
     @staticmethod
@@ -188,7 +204,7 @@ class DatabaseManager:
             if conn:
                 try:
                     conn.close()
-                except:
+                except Exception:
                     pass
     
     @staticmethod
