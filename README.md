@@ -58,4 +58,4 @@ streamlit run app.py
 - Query validation and sanitization
 - Local data processing
 
-
+Live link: https://ai-database-assistant.streamlit.app/
