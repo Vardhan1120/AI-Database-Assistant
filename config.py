@@ -13,7 +13,6 @@ class Config:
     DB_TIMEOUT = 30
     API_MODEL = "gemini-2.5-flash"
 
-
     
     # Security
     DANGEROUS_KEYWORDS = [
