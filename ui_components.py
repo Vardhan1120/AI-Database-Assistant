@@ -115,12 +115,29 @@ def render_api_config():
     """Render API configuration section"""
     st.subheader("🔑 API Configuration")
     
+    # First, try to get API key from Streamlit secrets (for deployed apps)
+    secret_api_key = None
+    try:
+        if hasattr(st, 'secrets') and st.secrets:
+            secret_api_key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("gemini_api_key")
+    except Exception:
+        pass  # Secrets not configured, that's okay
+    
+    # If we have a secret key and client isn't configured, use it
+    if secret_api_key and not st.session_state.api_configured:
+        client = AIManager.initialize_client(secret_api_key)
+        if client:
+            st.session_state.genai_client = client
+            st.session_state.api_configured = True
+            st.success("✅ API Connected (using configured secret)")
+    
+    # Manual input (for local development or if secret not available)
     api_key = st.text_input(
         "Gemini API Key",
         type="password",
-        help="Get your free API key from Google AI Studio",
+        help="Get your free API key from Google AI Studio. Leave empty if using Streamlit secrets.",
         value="" if not st.session_state.api_configured else "••••••••••••••••",
-        placeholder="Enter your API key here"
+        placeholder="Enter your API key here (or use secrets)"
     )
     
     if api_key and not api_key.startswith("••"):
@@ -130,7 +147,10 @@ def render_api_config():
             st.session_state.api_configured = True
             st.success("✅ API Connected Successfully!")
     elif st.session_state.api_configured:
-        st.success("✅ API Connected")
+        if secret_api_key:
+            st.success("✅ API Connected (using secret)")
+        else:
+            st.success("✅ API Connected")
     else:
         st.info("👆 Enter your Gemini API key to get started")
         with st.expander("❓ How to get API Key"):
@@ -141,6 +161,11 @@ def render_api_config():
             2. Sign in with your Google account
             3. Click **"Create API Key"**
             4. Copy the key and paste it above
+            
+            **For Streamlit Cloud:** Add your API key in App Settings → Secrets:
+            ```
+            GEMINI_API_KEY = "your-api-key-here"
+            ```
             
             **Note:** The API is free with generous quotas!
             """)

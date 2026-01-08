@@ -154,6 +154,20 @@ class SessionState:
         for key, default_value in defaults.items():
             if key not in st.session_state:
                 st.session_state[key] = default_value
+        
+        # Auto-initialize API client from secrets if available
+        if not st.session_state.api_configured:
+            try:
+                from ai_manager import AIManager
+                if hasattr(st, 'secrets') and st.secrets:
+                    secret_api_key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("gemini_api_key")
+                    if secret_api_key:
+                        client = AIManager.initialize_client(secret_api_key)
+                        if client:
+                            st.session_state.genai_client = client
+                            st.session_state.api_configured = True
+            except Exception:
+                pass  # Secrets not configured or error, that's okay
     
     @staticmethod
     def reset_chat():
