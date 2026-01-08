@@ -11,7 +11,9 @@ class Config:
     MAX_ROWS_VISUALIZATION = 500
     MAX_UNIQUE_CATEGORIES = 20
     DB_TIMEOUT = 30
-    API_MODEL = "gemini-2.0-flash-exp"
+    API_MODEL = "gemini-2.5-flash"
+
+
     
     # Security
     DANGEROUS_KEYWORDS = [
